@@ -22,18 +22,22 @@ import app.cash.redwood.compose.findFocusRequesterRecursive
 import app.cash.redwood.leaks.LeakDetector
 import app.cash.redwood.protocol.Change
 import app.cash.redwood.protocol.EventSink
+import app.cash.redwood.protocol.Id
 import app.cash.redwood.protocol.host.DirectTransportUiEvent
 import app.cash.redwood.protocol.host.HostProtocolAdapter
 import app.cash.redwood.protocol.host.UiChange
 import app.cash.redwood.protocol.host.UiEvent
 import app.cash.redwood.protocol.host.UiEventSink
+import app.cash.redwood.widget.WidgetCrashBoundary
 import app.cash.redwood.treehouse.Content.State
 import app.cash.redwood.ui.OnBackPressedCallback
 import app.cash.redwood.ui.OnBackPressedDispatcher
 import app.cash.redwood.ui.UiConfiguration
 import app.cash.redwood.ui.core.api.FocusRequester
+import app.cash.zipline.ZiplineException
 import app.cash.zipline.ZiplineScope
 import kotlin.concurrent.Volatile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -45,6 +49,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 
 private class InternalState<A : AppService>(
   val viewState: ViewState,
@@ -381,12 +386,14 @@ private class ViewContentCodeBinding<A : AppService>(
   /** Note that this is necessary to break the retain cycle between host and guest. */
   private val eventBridge = EventBridge(
     ziplineDispatcher = dispatchers.zipline,
+    uiDispatcher = dispatchers.ui,
     bindingScope = bindingScope,
     directEventsEnabled = directEventsEnabled,
     // Resolved lazily on the zipline dispatcher (the binding resolves the session's zipline there).
     engineProvider = {
       (codeSession as? ZiplineCodeSession)?.zipline?.jsEngine
     },
+    onGuestException = ::isolateGuestException,
   )
 
   /**
@@ -482,6 +489,18 @@ private class ViewContentCodeBinding<A : AppService>(
     updateChangeCount()
 
     hostAdapter.sendChanges(changes)
+  }
+
+  /**
+   * A guest [ZiplineException] fails only the nearest [WidgetCrashBoundary]. Returns the protocol
+   * ids of that subtree so later events for it are ignored. Null lets the session die.
+   */
+  private suspend fun isolateGuestException(id: Id, exception: Exception): Set<Int>? {
+    dispatchers.checkUi()
+    val adapter = hostAdapterOrNull ?: return null
+    val (widget, ids) = adapter.crashBoundaryAt(id.value) ?: return null
+    (widget as WidgetCrashBoundary).onGuestException(exception)
+    return ids
   }
 
   private fun <W : Any> createHostProtocolAdapter(view: TreehouseView<W>): HostProtocolAdapter<W> {
@@ -680,10 +699,12 @@ private fun <W : Any> TreehouseView<W>.showCrashed(
 private class EventBridge(
   // Both properties are only accessed on the UI dispatcher and null after cancel().
   var ziplineDispatcher: CoroutineDispatcher?,
+  private val uiDispatcher: CoroutineDispatcher,
   var bindingScope: CoroutineScope?,
   private val directEventsEnabled: Boolean = false,
   /** Resolves the session's [app.cash.zipline.JsEngine] on the zipline dispatcher. */
   private val engineProvider: () -> app.cash.zipline.JsEngine?,
+  private val onGuestException: suspend (Id, Exception) -> Set<Int>?,
 ) : UiEventSink {
   // Only accessed on the Zipline dispatcher and null after cancel().
   var delegate: EventSink? = null
@@ -695,34 +716,48 @@ private class EventBridge(
    */
   private var sinkPresent: Boolean? = null
 
+  /** Protocol ids whose guest calls must not reach the session exception handler. */
+  private val deadIds = mutableSetOf<Int>()
+
   /** Send an event from the UI to Zipline. */
   override fun sendEvent(uiEvent: UiEvent) {
     // Send UI events on the zipline dispatcher.
     val dispatcher = this.ziplineDispatcher ?: return
     val bindingScope = this.bindingScope ?: return
     bindingScope.launch(dispatcher) {
-      if (directEventsEnabled && uiEvent is DirectTransportUiEvent) {
-        val jsEngine = engineProvider()
-        val hasSink = sinkPresent ?: (jsEngine?.hasGlobalFunction(DIRECT_EVENT_SINK_NAME) == true)
-        sinkPresent = hasSink
-        if (jsEngine != null && hasSink) {
-          // JSON-free delivery: args are converted host->JS by callGuestFunction (bridgeAnyToJs /
-          // anyToJs on the guest class prototypes) and dispatched to the widget's sendDirectEvent.
-          // The guest sink signature is (id, tag, argsArray): the raw event args travel as ONE
-          // JS array so each element binds to one sendDirectEvent parameter. (Flattening them
-          // made the guest bind `args` to the first event argument instead.)
-          jsEngine.callGuestFunction(
-            DIRECT_EVENT_SINK_NAME,
-            listOf(uiEvent.id.value, uiEvent.tag.value, uiEvent.args ?: emptyArray<Any?>()),
-          )
-          return@launch
+      try {
+        if (directEventsEnabled && uiEvent is DirectTransportUiEvent) {
+          val jsEngine = engineProvider()
+          val hasSink = sinkPresent ?: (jsEngine?.hasGlobalFunction(DIRECT_EVENT_SINK_NAME) == true)
+          sinkPresent = hasSink
+          if (jsEngine != null && hasSink) {
+            if (uiEvent.id.value in deadIds) return@launch
+            // JSON-free delivery: args are converted host->JS by callGuestFunction (bridgeAnyToJs /
+            // anyToJs on the guest class prototypes) and dispatched to the widget's sendDirectEvent.
+            // The guest sink signature is (id, tag, argsArray): the raw event args travel as ONE
+            // JS array so each element binds to one sendDirectEvent parameter. (Flattening them
+            // made the guest bind `args` to the first event argument instead.)
+            jsEngine.callGuestFunction(
+              DIRECT_EVENT_SINK_NAME,
+              listOf(uiEvent.id.value, uiEvent.tag.value, uiEvent.args ?: emptyArray<Any?>()),
+            )
+            return@launch
+          }
         }
+
+        // Perform initial serialization of event arguments into JSON model after the thread hop.
+        val event = uiEvent.toProtocol()
+        if (event.id.value in deadIds) return@launch
+
+        delegate?.sendEvent(event)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: ZiplineException) {
+        val id = (uiEvent as? DirectTransportUiEvent)?.id ?: uiEvent.toProtocol().id
+        val killed = withContext(uiDispatcher) { onGuestException(id, e) }
+        if (killed == null) throw e
+        deadIds += killed
       }
-
-      // Perform initial serialization of event arguments into JSON model after the thread hop.
-      val event = uiEvent.toProtocol()
-
-      delegate?.sendEvent(event)
     }
   }
 }

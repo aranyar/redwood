@@ -55,6 +55,7 @@ final class <#A: kotlin/Any> app.cash.redwood.protocol.host/HostProtocolAdapter 
     constructor <init>(app.cash.redwood.protocol/RedwoodVersion, app.cash.redwood.widget/Widget.Children<#A>, app.cash.redwood.protocol.host/HostProtocol, app.cash.redwood.widget/WidgetSystem<#A>, app.cash.redwood.protocol.host/UiEventSink, app.cash.redwood.leaks/LeakDetector) // app.cash.redwood.protocol.host/HostProtocolAdapter.<init>|<init>(app.cash.redwood.protocol.RedwoodVersion;app.cash.redwood.widget.Widget.Children<1:0>;app.cash.redwood.protocol.host.HostProtocol;app.cash.redwood.widget.WidgetSystem<1:0>;app.cash.redwood.protocol.host.UiEventSink;app.cash.redwood.leaks.LeakDetector){}[0]
 
     final fun close() // app.cash.redwood.protocol.host/HostProtocolAdapter.close|close(){}[0]
+    final fun crashBoundaryAt(kotlin/Int): kotlin/Pair<app.cash.redwood.widget/Widget<#A>, kotlin.collections/Set<kotlin/Int>>? // app.cash.redwood.protocol.host/HostProtocolAdapter.crashBoundaryAt|crashBoundaryAt(kotlin.Int){}[0]
     final fun sendChanges(kotlin.collections/List<app.cash.redwood.protocol.host/UiChange>) // app.cash.redwood.protocol.host/HostProtocolAdapter.sendChanges|sendChanges(kotlin.collections.List<app.cash.redwood.protocol.host.UiChange>){}[0]
 }
 
