@@ -31,6 +31,7 @@ import app.cash.redwood.protocol.RedwoodVersion
 import app.cash.redwood.protocol.WidgetTag
 import app.cash.redwood.widget.ChangeListener
 import app.cash.redwood.widget.Widget
+import app.cash.redwood.widget.WidgetCrashBoundary
 import app.cash.redwood.widget.WidgetSystem
 import kotlin.native.ObjCName
 
@@ -98,6 +99,7 @@ public class HostProtocolAdapter<W : Any>(
           when (change) {
             is Add -> {
               val child = node(change.childId)
+              child.parent = node
               children.insert(change.index, child)
             }
 
@@ -111,6 +113,7 @@ public class HostProtocolAdapter<W : Any>(
                 if (!change.detach) {
                   for (childIndex in change.index until change.index + change.count) {
                     val child = children.nodes[childIndex]
+                    child.parent = null
                     child.visitIds(removeNodeById)
                     poolOrDetach(child)
                   }
@@ -164,6 +167,34 @@ public class HostProtocolAdapter<W : Any>(
 
   internal fun node(id: Id): ProtocolNode<W> {
     return checkNotNull(nodes[id.value]) { "Unknown widget ID ${id.value}" }
+  }
+
+  /**
+   * Walks from [id] to the nearest [WidgetCrashBoundary] ancestor.
+   *
+   * Returns that widget and every protocol id in its subtree, so the caller can drop later
+   * events after the subtree is removed.
+   */
+  public fun crashBoundaryAt(id: Int): Pair<Widget<W>, Set<Int>>? {
+    var current = nodes[id]
+    while (current != null && current.widget !is WidgetCrashBoundary) {
+      current = current.parent
+    }
+    val boundary = current ?: return null
+    val ids = mutableSetOf<Int>()
+    collectIds(boundary, ids)
+    return boundary.widget to ids
+  }
+
+  private fun collectIds(node: ProtocolNode<W>, ids: MutableSet<Int>) {
+    ids += node.id.value
+    val tags = protocol.widget(node.widgetTag)?.childrenTags ?: return
+    for (tag in tags) {
+      val children = node.children(ChildrenTag(tag)) ?: continue
+      for (child in children.nodes) {
+        collectIds(child, ids)
+      }
+    }
   }
 
   /**

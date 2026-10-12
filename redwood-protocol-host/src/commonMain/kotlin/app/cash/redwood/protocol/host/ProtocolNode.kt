@@ -43,6 +43,9 @@ public abstract class ProtocolNode<W : Any>(
   /** The index of [widget] within its parent [container]. */
   internal var index: Int = -1
 
+  /** Protocol parent, set when this node is added to a children group. */
+  internal var parent: ProtocolNode<W>? = null
+
   internal var container: Widget.Children<W>? = null
 
   internal var reuse = false

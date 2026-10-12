@@ -104,6 +104,10 @@ public abstract interface class app/cash/redwood/widget/Widget$Children {
 	public abstract fun remove (II)V
 }
 
+public abstract interface class app/cash/redwood/widget/WidgetCrashBoundary {
+	public abstract fun onGuestException (Ljava/lang/Exception;)V
+}
+
 public abstract interface class app/cash/redwood/widget/WidgetSystem {
 	public abstract fun apply (Ljava/lang/Object;Lapp/cash/redwood/Modifier$UnscopedElement;)V
 }
