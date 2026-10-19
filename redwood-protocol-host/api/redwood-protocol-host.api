@@ -11,7 +11,6 @@ public abstract interface class app/cash/redwood/protocol/host/HostProtocol$Fact
 public final class app/cash/redwood/protocol/host/HostProtocolAdapter : app/cash/redwood/protocol/host/UiChangesSink {
 	public synthetic fun <init> (Ljava/lang/String;Lapp/cash/redwood/widget/Widget$Children;Lapp/cash/redwood/protocol/host/HostProtocol;Lapp/cash/redwood/widget/WidgetSystem;Lapp/cash/redwood/protocol/host/UiEventSink;Lapp/cash/redwood/leaks/LeakDetector;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun close ()V
-	public final fun crashBoundaryAt (I)Lkotlin/Pair;
 	public fun sendChanges (Ljava/util/List;)V
 }
 
