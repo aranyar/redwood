@@ -46,10 +46,6 @@ abstract interface <#A: kotlin/Any> app.cash.redwood.widget/WidgetSystem { // ap
     abstract fun apply(#A, app.cash.redwood/Modifier.UnscopedElement) // app.cash.redwood.widget/WidgetSystem.apply|apply(1:0;app.cash.redwood.Modifier.UnscopedElement){}[0]
 }
 
-abstract interface app.cash.redwood.widget/WidgetCrashBoundary { // app.cash.redwood.widget/WidgetCrashBoundary|null[0]
-    abstract fun onGuestException(kotlin/Exception) // app.cash.redwood.widget/WidgetCrashBoundary.onGuestException|onGuestException(kotlin.Exception){}[0]
-}
-
 abstract interface app.cash.redwood.widget/ChangeListener { // app.cash.redwood.widget/ChangeListener|null[0]
     abstract fun onEndChanges() // app.cash.redwood.widget/ChangeListener.onEndChanges|onEndChanges(){}[0]
 }
