@@ -21,7 +21,6 @@ package app.cash.redwood.treehouse
 import app.cash.redwood.compose.findFocusRequesterRecursive
 import app.cash.redwood.leaks.LeakDetector
 import app.cash.redwood.protocol.Change
-import app.cash.redwood.protocol.EventSink
 import app.cash.redwood.protocol.Id
 import app.cash.redwood.protocol.host.DirectTransportUiEvent
 import app.cash.redwood.protocol.host.HostProtocolAdapter
@@ -374,6 +373,12 @@ private class ViewContentCodeBinding<A : AppService>(
    */
   private var hostAdapterOrNull: HostProtocolAdapter<*>? = null
 
+  /** Only accessed on [TreehouseDispatchers.ui]. */
+  private val compositionAdapters = mutableMapOf<String, HostProtocolAdapter<*>>()
+
+  /** Only accessed on [TreehouseDispatchers.ui]. */
+  private val compositionChangesAwaitingView = ArrayDeque<Pair<String, List<UiChange>>>()
+
   /** Only accessed on [TreehouseDispatchers.zipline]. */
   private val serviceScope = codeSession.newServiceScope()
 
@@ -394,6 +399,7 @@ private class ViewContentCodeBinding<A : AppService>(
       (codeSession as? ZiplineCodeSession)?.zipline?.jsEngine
     },
     onGuestException = ::isolateGuestException,
+    onCompositionEventException = ::onCompositionEventException,
   )
 
   /**
@@ -443,6 +449,11 @@ private class ViewContentCodeBinding<A : AppService>(
       receiveChangesOnUiDispatcher(changes)
     }
 
+    while (true) {
+      val (compositionId, changes) = compositionChangesAwaitingView.removeFirstOrNull() ?: break
+      receiveCompositionChangesOnUiDispatcher(compositionId, changes)
+    }
+
     if (mustUpdateView && !hasChanges) {
       view.showLoading()
     }
@@ -461,6 +472,71 @@ private class ViewContentCodeBinding<A : AppService>(
     bindingScope.launch(dispatchers.ui) {
       receiveChangesOnUiDispatcher(uiChanges)
     }
+  }
+
+  override fun sendCompositionChanges(compositionId: String, changes: List<Change>) {
+    val uiChanges = changes.mapNotNull { change ->
+      UiChange.fromProtocol(
+        protocol = codeSession.hostProtocol,
+        change = change,
+      )
+    }
+    bindingScope.launch(dispatchers.ui) {
+      receiveCompositionChangesOnUiDispatcher(compositionId, uiChanges)
+    }
+  }
+
+  override fun onCompositionFailed(compositionId: String, message: String) {
+    bindingScope.launch(dispatchers.ui) {
+      if (canceled) return@launch
+      compositionAdapters.remove(compositionId)?.close()
+      compositionDisplay()?.onFailed(compositionId, message)
+    }
+  }
+
+  override fun closeComposition(compositionId: String) {
+    bindingScope.launch(dispatchers.ui) {
+      compositionAdapters.remove(compositionId)?.close()
+    }
+  }
+
+  private fun receiveCompositionChangesOnUiDispatcher(
+    compositionId: String,
+    changes: List<UiChange>,
+  ) {
+    if (canceled) return
+    val view = viewOrNull
+    if (view == null) {
+      compositionChangesAwaitingView += compositionId to changes
+      return
+    }
+    val adapter = compositionAdapters.getOrPut(compositionId) {
+      createCompositionAdapter(view, compositionId)
+    }
+    adapter.sendChanges(changes)
+  }
+
+  private fun <W : Any> createCompositionAdapter(
+    view: TreehouseView<W>,
+    compositionId: String,
+  ): HostProtocolAdapter<W> {
+    val display = view as? CompositionDisplay<W>
+      ?: error("TreehouseView does not display mounted compositions")
+    return HostProtocolAdapter(
+      guestVersion = codeSession.guestProtocolVersion,
+      container = display.children(compositionId),
+      protocol = codeSession.hostProtocol,
+      widgetSystem = view.widgetSystem,
+      eventSink = UiEventSink { event ->
+        eventBridge.sendCompositionEvent(compositionId, event)
+      },
+      leakDetector = leakDetector,
+    )
+  }
+
+  @Suppress("UNCHECKED_CAST")
+  private fun compositionDisplay(): CompositionDisplay<Any>? {
+    return viewOrNull as? CompositionDisplay<Any>
   }
 
   private fun receiveChangesOnUiDispatcher(changes: List<UiChange>) {
@@ -495,6 +571,13 @@ private class ViewContentCodeBinding<A : AppService>(
    * A guest [ZiplineException] fails only the nearest [WidgetCrashBoundary]. Returns the protocol
    * ids of that subtree so later events for it are ignored. Null lets the session die.
    */
+  private fun onCompositionEventException(compositionId: String, exception: Exception) {
+    dispatchers.checkUi()
+    if (canceled) return
+    compositionAdapters.remove(compositionId)?.close()
+    compositionDisplay()?.onFailed(compositionId, exception.stackTraceToString())
+  }
+
   private suspend fun isolateGuestException(id: Id, exception: Exception): Set<Int>? {
     dispatchers.checkUi()
     val adapter = hostAdapterOrNull ?: return null
@@ -651,6 +734,9 @@ private class ViewContentCodeBinding<A : AppService>(
 
     hostAdapterOrNull?.close()
     hostAdapterOrNull = null
+    compositionAdapters.values.forEach { it.close() }
+    compositionAdapters.clear()
+    compositionChangesAwaitingView.clear()
     viewOrNull?.let { view ->
       if (exception != null) view.showCrashed(exception, codeHostOrNull!!)
       view.saveCallback = null
@@ -705,9 +791,10 @@ private class EventBridge(
   /** Resolves the session's [app.cash.zipline.JsEngine] on the zipline dispatcher. */
   private val engineProvider: () -> app.cash.zipline.JsEngine?,
   private val onGuestException: suspend (Id, Exception) -> Set<Int>?,
+  private val onCompositionEventException: (String, Exception) -> Unit,
 ) : UiEventSink {
   // Only accessed on the Zipline dispatcher and null after cancel().
-  var delegate: EventSink? = null
+  var delegate: ZiplineTreehouseUi? = null
 
   /**
    * Whether the guest installed the direct-event sink. Resolved once on the zipline dispatcher
@@ -757,6 +844,31 @@ private class EventBridge(
         val killed = withContext(uiDispatcher) { onGuestException(id, e) }
         if (killed == null) throw e
         deadIds += killed
+      }
+    }
+  }
+
+  /**
+   * Event for one mounted composition. A guest failure aborts that composition
+   * and leaves the shared session running.
+   */
+  fun sendCompositionEvent(compositionId: String, uiEvent: UiEvent) {
+    val dispatcher = this.ziplineDispatcher ?: return
+    val bindingScope = this.bindingScope ?: return
+    bindingScope.launch(dispatcher) {
+      try {
+        delegate?.sendCompositionEvent(compositionId, uiEvent.toProtocol())
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: ZiplineException) {
+        try {
+          delegate?.abortComposition(compositionId)
+        } catch (abort: CancellationException) {
+          throw abort
+        } catch (_: Exception) {
+          // The guest call already failed. Still report the original exception below.
+        }
+        withContext(uiDispatcher) { onCompositionEventException(compositionId, e) }
       }
     }
   }
