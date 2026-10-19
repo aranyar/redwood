@@ -18,10 +18,8 @@ package app.cash.redwood.treehouse
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.saveable.SaveableStateRegistry
 import app.cash.redwood.compose.RedwoodComposition
-import app.cash.redwood.protocol.ChangesSink
 import app.cash.redwood.protocol.Event
 import app.cash.redwood.protocol.EventSink
-import app.cash.redwood.protocol.guest.DefaultGuestProtocolAdapter
 import app.cash.redwood.protocol.guest.GuestProtocolAdapter
 import app.cash.redwood.protocol.guest.ProtocolRedwoodComposition
 import app.cash.redwood.ui.Cancellable
@@ -165,15 +163,11 @@ private class RedwoodZiplineTreehouseUi(
     val host = hostOrNull ?: error("mount before start")
     if (id in mounted) unmount(id)
 
-    val adapter = DefaultGuestProtocolAdapter(
-      json = appLifecycle.json,
-      hostVersion = appLifecycle.hostProtocolVersion,
-      widgetSystemFactory = appLifecycle.protocolWidgetSystemFactory,
-      mismatchHandler = appLifecycle.mismatchHandler,
+    val adapter = compositionProtocolAdapter(
+      appLifecycle = appLifecycle,
+      host = host,
+      compositionId = id,
     )
-    adapter.initChangesSink(ChangesSink { changes ->
-      host.sendCompositionChanges(id, changes)
-    })
 
     val viewport = MutableStateFlow<Size?>(null)
     val hostConfiguration = MutableStateFlow<UiConfiguration?>(null)
