@@ -231,7 +231,16 @@ private class RedwoodZiplineTreehouseUi(
   }
 
   override fun sendCompositionEvent(compositionId: String, event: Event) {
-    mounted[compositionId]?.adapter?.sendEvent(event)
+    try {
+      mounted[compositionId]?.adapter?.sendEvent(event)
+    } catch (throwable: CancellationException) {
+      throw throwable
+    } catch (throwable: Exception) {
+      // A click lambda throws on this call. Across Zipline that would surface as
+      // ZiplineException and the host would abort the composition; in-process the
+      // exception is still an Exception, so fail it here.
+      fail(compositionId, throwable)
+    }
   }
 
   override fun abortComposition(compositionId: String) {
