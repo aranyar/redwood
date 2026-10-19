@@ -25,6 +25,7 @@ import app.cash.redwood.protocol.Id
 import app.cash.redwood.protocol.PropertyTag
 import app.cash.redwood.protocol.RedwoodVersion
 import app.cash.redwood.protocol.WidgetTag
+import app.cash.redwood.protocol.guest.DefaultGuestProtocolAdapter
 import app.cash.redwood.protocol.guest.GuestProtocolAdapter
 import app.cash.redwood.protocol.guest.ProtocolMismatchHandler
 import app.cash.redwood.protocol.guest.ProtocolWidget
@@ -85,9 +86,15 @@ internal class FastGuestProtocolAdapter(
 
   override fun initChangesSink(changesSink: ChangesSink) {
     val changesSinkService = changesSink as ChangesSinkService
+    val sourceType = changesSinkService.sourceType
+    if (sourceType == null) {
+      // Plain Kotlin host, used by in-process tests. A Zipline proxy always has a source type.
+      initChangesSink(changesSinkService) { _, _ -> }
+      return
+    }
     initChangesSink(
       changesSinkService = changesSinkService,
-      sendChanges = changesSinkService.sourceType!!.functions
+      sendChanges = sourceType.functions
         .single { "sendChanges" in it.signature }
         .asDynamicFunction(),
     )
@@ -312,6 +319,20 @@ internal actual fun compositionProtocolAdapter(
   host: ZiplineTreehouseUi.Host,
   compositionId: String,
 ): GuestProtocolAdapter {
+  if (host.sourceType == null) {
+    // FastGuestProtocolAdapter emits a JS array and can only call a Zipline proxy.
+    // In-process tests pass a Kotlin host and read List<Change> back.
+    return DefaultGuestProtocolAdapter(
+      json = appLifecycle.json,
+      hostVersion = appLifecycle.hostProtocolVersion,
+      widgetSystemFactory = appLifecycle.protocolWidgetSystemFactory,
+      mismatchHandler = appLifecycle.mismatchHandler,
+    ).also { adapter ->
+      adapter.initChangesSink(ChangesSink { changes ->
+        host.sendCompositionChanges(compositionId, changes)
+      })
+    }
+  }
   return FastGuestProtocolAdapter(
     json = appLifecycle.json,
     hostVersion = appLifecycle.hostProtocolVersion,
