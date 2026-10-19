@@ -150,6 +150,32 @@ class FastGuestProtocolAdapterTest {
     assertEquals(listOf("bridged host"), received)
   }
 
+  @Test fun compositionAdapterLeavesRootDirectEventRouter() {
+    val root = FastGuestProtocolAdapter(
+      hostVersion = guestRedwoodVersion,
+      widgetSystemFactory = TestSchemaProtocolWidgetSystemFactory,
+      json = Json.Default,
+      mismatchHandler = ProtocolMismatchHandler.Throwing,
+    )
+    val received = mutableListOf<String>()
+    val widgetSystem = root.widgetSystem as TestSchemaWidgetSystem<Unit>
+    val textInput = widgetSystem.TestSchema.TextInput()
+    textInput.onChange { text -> received += text }
+    root.root.insert(0, textInput)
+
+    FastGuestProtocolAdapter(
+      hostVersion = guestRedwoodVersion,
+      widgetSystemFactory = TestSchemaProtocolWidgetSystemFactory,
+      json = Json.Default,
+      mismatchHandler = ProtocolMismatchHandler.Throwing,
+      bindDirectEvents = false,
+    )
+
+    val sink: dynamic = js("globalThis['${DIRECT_EVENT_SINK_NAME}']")
+    sink((textInput as app.cash.redwood.protocol.guest.ProtocolWidget).id.value, 3, js("['still root']"))
+    assertEquals(listOf("still root"), received)
+  }
+
   @Test fun directEventSinkToUnknownNodeThrows() {
     val guest = FastGuestProtocolAdapter(
       hostVersion = guestRedwoodVersion,
