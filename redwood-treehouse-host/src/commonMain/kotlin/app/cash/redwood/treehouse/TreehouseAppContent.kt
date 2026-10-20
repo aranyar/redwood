@@ -486,14 +486,14 @@ private class ViewContentCodeBinding<A : AppService>(
   override fun onCompositionFailed(compositionId: String, message: String) {
     bindingScope.launch(dispatchers.ui) {
       if (canceled) return@launch
-      compositionAdapters.remove(compositionId)?.close()
+      endComposition(compositionId)
       compositionDisplay()?.onFailed(compositionId, message)
     }
   }
 
   override fun closeComposition(compositionId: String) {
     bindingScope.launch(dispatchers.ui) {
-      compositionAdapters.remove(compositionId)?.close()
+      endComposition(compositionId)
     }
   }
 
@@ -567,8 +567,18 @@ private class ViewContentCodeBinding<A : AppService>(
   private fun onCompositionEventException(compositionId: String, exception: Exception) {
     dispatchers.checkUi()
     if (canceled) return
-    compositionAdapters.remove(compositionId)?.close()
+    endComposition(compositionId)
     compositionDisplay()?.onFailed(compositionId, exception.stackTraceToString())
+  }
+
+  /**
+   * The guest has stopped this composition. Drop changes that arrived before the view
+   * existed so [initView] does not build a host adapter for it. A later mount of the
+   * same id is a new composition and is applied normally.
+   */
+  private fun endComposition(compositionId: String) {
+    compositionChangesAwaitingView.removeAll { (queuedId, _) -> queuedId == compositionId }
+    compositionAdapters.remove(compositionId)?.close()
   }
 
   private fun <W : Any> createHostProtocolAdapter(view: TreehouseView<W>): HostProtocolAdapter<W> {
@@ -696,13 +706,22 @@ private class ViewContentCodeBinding<A : AppService>(
 
   override fun requestFocus(focusRequester: FocusRequester) {
     bindingScope.launch(dispatchers.ui) {
-      viewOrNull?.requestFocus(focusRequester)
+      val view = viewOrNull ?: return@launch
+      view.requestFocus(focusRequester)
     }
   }
 
   /** This function is necessary to infer the type parameter [W]. */
   private fun <W : Any> TreehouseView<W>.requestFocus(focusRequester: FocusRequester) {
-    val widget = children.findFocusRequesterRecursive(focusRequester) ?: return
+    var widget = children.findFocusRequesterRecursive(focusRequester)
+    val display = this as? CompositionDisplay<W>
+    if (widget == null && display != null) {
+      for (id in compositionAdapters.keys) {
+        widget = display.children(id).findFocusRequesterRecursive(focusRequester)
+        if (widget != null) break
+      }
+    }
+    if (widget == null) return
     requestFocus(widget)
   }
 
@@ -793,37 +812,34 @@ private class EventBridge(
     val dispatcher = this.ziplineDispatcher ?: return
     val bindingScope = this.bindingScope ?: return
     bindingScope.launch(dispatcher) {
-      try {
-        if (directEventsEnabled && uiEvent is DirectTransportUiEvent) {
-          val jsEngine = engineProvider()
-          val hasSink = sinkPresent ?: (jsEngine?.hasGlobalFunction(DIRECT_EVENT_SINK_NAME) == true)
-          sinkPresent = hasSink
-          if (jsEngine != null && hasSink) {
-            // JSON-free delivery: args are converted host->JS by callGuestFunction (bridgeAnyToJs /
-            // anyToJs on the guest class prototypes) and dispatched to the widget's sendDirectEvent.
-            // The guest sink signature is (id, tag, argsArray): the raw event args travel as ONE
-            // JS array so each element binds to one sendDirectEvent parameter. (Flattening them
-            // made the guest bind `args` to the first event argument instead.)
-            jsEngine.callGuestFunction(
-              DIRECT_EVENT_SINK_NAME,
-              listOf(uiEvent.id.value, uiEvent.tag.value, uiEvent.args ?: emptyArray<Any?>()),
-            )
-            return@launch
-          }
+      if (directEventsEnabled && uiEvent is DirectTransportUiEvent) {
+        val jsEngine = engineProvider()
+        val hasSink = sinkPresent ?: (jsEngine?.hasGlobalFunction(DIRECT_EVENT_SINK_NAME) == true)
+        sinkPresent = hasSink
+        if (jsEngine != null && hasSink) {
+          // JSON-free delivery: args are converted host->JS by callGuestFunction (bridgeAnyToJs /
+          // anyToJs on the guest class prototypes) and dispatched to the widget's sendDirectEvent.
+          // The guest sink signature is (id, tag, argsArray): the raw event args travel as ONE
+          // JS array so each element binds to one sendDirectEvent parameter. (Flattening them
+          // made the guest bind `args` to the first event argument instead.)
+          jsEngine.callGuestFunction(
+            DIRECT_EVENT_SINK_NAME,
+            listOf(uiEvent.id.value, uiEvent.tag.value, uiEvent.args ?: emptyArray<Any?>()),
+          )
+          return@launch
         }
-
-        // Perform initial serialization of event arguments into JSON model after the thread hop.
-        val event = uiEvent.toProtocol()
-        delegate?.sendEvent(event)
-      } catch (e: CancellationException) {
-        throw e
       }
+
+      // Perform initial serialization of event arguments into JSON model after the thread hop.
+      val event = uiEvent.toProtocol()
+      delegate?.sendEvent(event)
     }
   }
 
   /**
    * Event for one mounted composition. A guest failure aborts that composition
-   * and leaves the shared session running.
+   * and leaves the shared session running. [abortComposition] only cancels the
+   * guest; the host failure text is this [ZiplineException].
    */
   fun sendCompositionEvent(compositionId: String, uiEvent: UiEvent) {
     val dispatcher = this.ziplineDispatcher ?: return

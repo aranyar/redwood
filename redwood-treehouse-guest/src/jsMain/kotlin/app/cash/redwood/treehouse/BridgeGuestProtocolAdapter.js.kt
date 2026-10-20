@@ -239,6 +239,9 @@ internal class BridgeGuestProtocolAdapterImpl(
   override fun emitChanges() {
     val directBridgeObj: dynamic = js("globalThis.app_cash_redwood_directSendChanges")
     if (directBridgeObj == undefined) {
+      // start() flushes the empty root Show(). Nothing was queued, so a missing
+      // channel is a no-op. Throwing here is uncaught and tears the session down.
+      if (pinnedObjects.length == 0) return
       throw AssertionError("Direct bridge changes channel not registered")
     }
 
