@@ -102,9 +102,16 @@ private class RedwoodZiplineTreehouseUi(
   private var focusDirector: FocusDirector? = null
 
   override fun onFrame(timeNanos: Long) {
+    // Root changes have no composition to fail. A throw here still stops the session.
     guestAdapter.emitChanges()
-    for (composition in mounted.values.toList()) {
-      composition.adapter.emitChanges()
+    for ((id, composition) in mounted.entries.toList()) {
+      try {
+        composition.adapter.emitChanges()
+      } catch (throwable: CancellationException) {
+        throw throwable
+      } catch (throwable: Exception) {
+        fail(id, throwable)
+      }
     }
   }
 
@@ -188,7 +195,10 @@ private class RedwoodZiplineTreehouseUi(
       widgetVersion = appLifecycle.widgetVersion,
       onBackPressedDispatcher = onBackPressedDispatcher!!,
       focusDirector = focusDirector!!,
-      saveableStateRegistry = null,
+      saveableStateRegistry = SaveableStateRegistry(
+        restoredValues = null,
+        canBeSaved = { true },
+      ),
       uiConfigurations = uiConfiguration,
     )
     val mountedComposition = MountedComposition(
@@ -224,9 +234,7 @@ private class RedwoodZiplineTreehouseUi(
   }
 
   override fun unmount(id: String) {
-    val composition = mounted.remove(id) ?: return
-    composition.composition.cancel()
-    composition.scope.cancel()
+    cancelMounted(id) ?: return
     hostOrNull?.closeComposition(id)
   }
 
@@ -244,13 +252,20 @@ private class RedwoodZiplineTreehouseUi(
   }
 
   override fun abortComposition(compositionId: String) {
-    fail(compositionId, IllegalStateException("composition aborted"))
+    // Caller reports the original exception. Notifying here would publish
+    // "composition aborted" first, and the host keeps the first failure.
+    cancelMounted(compositionId)
+  }
+
+  private fun cancelMounted(id: String): MountedComposition? {
+    val composition = mounted.remove(id) ?: return null
+    composition.composition.cancel()
+    composition.scope.cancel()
+    return composition
   }
 
   private fun fail(id: String, throwable: Throwable) {
-    val composition = mounted.remove(id) ?: return
-    composition.composition.cancel()
-    composition.scope.cancel()
+    cancelMounted(id) ?: return
     hostOrNull?.onCompositionFailed(id, throwable.stackTraceToString())
   }
 
