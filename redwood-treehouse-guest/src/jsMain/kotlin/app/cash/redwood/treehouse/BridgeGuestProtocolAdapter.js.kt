@@ -243,6 +243,9 @@ internal class BridgeGuestProtocolAdapterImpl(
   override fun emitChanges() {
     val rdmaObj: dynamic = js("globalThis.app_cash_redwood_rdmaSendChanges")
     if (rdmaObj == undefined) {
+      // start() flushes the empty root Show(). Nothing was queued, so a missing
+      // channel is a no-op. Throwing here is uncaught and tears the session down.
+      if (pinnedObjects.length == 0) return
       throw AssertionError("RDMA changes channel not registered")
     }
 
