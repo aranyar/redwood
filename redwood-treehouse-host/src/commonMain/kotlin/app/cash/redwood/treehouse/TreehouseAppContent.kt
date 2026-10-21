@@ -31,6 +31,7 @@ import app.cash.redwood.ui.OnBackPressedCallback
 import app.cash.redwood.ui.OnBackPressedDispatcher
 import app.cash.redwood.ui.UiConfiguration
 import app.cash.redwood.ui.core.api.FocusRequester
+import app.cash.redwood.widget.Widget
 import app.cash.zipline.ZiplineException
 import app.cash.zipline.ZiplineScope
 import kotlin.concurrent.Volatile
@@ -372,7 +373,7 @@ private class ViewContentCodeBinding<A : AppService>(
   private var hostAdapterOrNull: HostProtocolAdapter<*>? = null
 
   /** Only accessed on [TreehouseDispatchers.ui]. */
-  private val compositionAdapters = mutableMapOf<String, HostProtocolAdapter<*>>()
+  private val compositionAdapters = mutableMapOf<String, CompositionHost<*>>()
 
   /** Only accessed on [TreehouseDispatchers.ui]. */
   private val compositionChangesAwaitingView = ArrayDeque<Pair<String, List<UiChange>>>()
@@ -510,24 +511,28 @@ private class ViewContentCodeBinding<A : AppService>(
     val adapter = compositionAdapters.getOrPut(compositionId) {
       createCompositionAdapter(view, compositionId)
     }
-    adapter.sendChanges(changes)
+    adapter.adapter.sendChanges(changes)
   }
 
   private fun <W : Any> createCompositionAdapter(
     view: TreehouseView<W>,
     compositionId: String,
-  ): HostProtocolAdapter<W> {
+  ): CompositionHost<W> {
     val display = view as? CompositionDisplay<W>
       ?: error("TreehouseView does not display mounted compositions")
-    return HostProtocolAdapter(
-      guestVersion = codeSession.guestProtocolVersion,
-      container = display.children(compositionId),
-      protocol = codeSession.hostProtocol,
-      widgetSystem = view.widgetSystem,
-      eventSink = UiEventSink { event ->
-        eventBridge.sendCompositionEvent(compositionId, event)
-      },
-      leakDetector = leakDetector,
+    val children = display.children(compositionId)
+    return CompositionHost(
+      adapter = HostProtocolAdapter(
+        guestVersion = codeSession.guestProtocolVersion,
+        container = children,
+        protocol = codeSession.hostProtocol,
+        widgetSystem = view.widgetSystem,
+        eventSink = UiEventSink { event ->
+          eventBridge.sendCompositionEvent(compositionId, event)
+        },
+        leakDetector = leakDetector,
+      ),
+      children = children,
     )
   }
 
@@ -578,7 +583,7 @@ private class ViewContentCodeBinding<A : AppService>(
    */
   private fun endComposition(compositionId: String) {
     compositionChangesAwaitingView.removeAll { (queuedId, _) -> queuedId == compositionId }
-    compositionAdapters.remove(compositionId)?.close()
+    compositionAdapters.remove(compositionId)?.adapter?.close()
   }
 
   private fun <W : Any> createHostProtocolAdapter(view: TreehouseView<W>): HostProtocolAdapter<W> {
@@ -706,18 +711,18 @@ private class ViewContentCodeBinding<A : AppService>(
 
   override fun requestFocus(focusRequester: FocusRequester) {
     bindingScope.launch(dispatchers.ui) {
-      val view = viewOrNull ?: return@launch
-      view.requestFocus(focusRequester)
+      viewOrNull?.requestFocus(focusRequester)
     }
   }
 
   /** This function is necessary to infer the type parameter [W]. */
   private fun <W : Any> TreehouseView<W>.requestFocus(focusRequester: FocusRequester) {
     var widget = children.findFocusRequesterRecursive(focusRequester)
-    val display = this as? CompositionDisplay<W>
+    val display = this as? CompositionDisplay<*>
     if (widget == null && display != null) {
-      for (id in compositionAdapters.keys) {
-        widget = display.children(id).findFocusRequesterRecursive(focusRequester)
+      for (host in compositionAdapters.values) {
+        @Suppress("UNCHECKED_CAST")
+        widget = (host.children as Widget.Children<W>).findFocusRequesterRecursive(focusRequester)
         if (widget != null) break
       }
     }
@@ -738,7 +743,7 @@ private class ViewContentCodeBinding<A : AppService>(
 
     hostAdapterOrNull?.close()
     hostAdapterOrNull = null
-    compositionAdapters.values.forEach { it.close() }
+    compositionAdapters.values.forEach { it.adapter.close() }
     compositionAdapters.clear()
     compositionChangesAwaitingView.clear()
     viewOrNull?.let { view ->
@@ -862,3 +867,9 @@ private class EventBridge(
     }
   }
 }
+
+/** Children captured when the slot was opened, so focus does not call [CompositionDisplay.children] again. */
+private class CompositionHost<W : Any>(
+  val adapter: HostProtocolAdapter<W>,
+  val children: Widget.Children<W>,
+)

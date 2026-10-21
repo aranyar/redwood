@@ -611,6 +611,33 @@ class TreehouseAppContentTest {
   }
 
   @Test
+  fun requestFocusDoesNotRecreateClosedCompositionChildren() = runTest {
+    val content = treehouseAppContent()
+
+    val codeSession = codeHost.startCodeSession("codeSession")
+    val view = treehouseView("view")
+    content.bind(view)
+    val sessionContent = codeSession.appService.uis.single()
+
+    with(sessionContent) {
+      addCompositionWidget("pane", "name")
+      emitCompositionChanges("pane")
+    }
+    assertThat(view.compositionChildren.keys).isEqualTo(setOf("pane"))
+
+    // The layout slot is gone, but the host adapter for it is still mounted.
+    view.compositionChildren.remove("pane")
+    sessionContent.newFocusRequester().requestFocus()
+
+    assertThat(view.compositionChildren).isEmpty()
+    assertThat(view.focused).isNull()
+
+    content.unbind()
+    content.awaitCodeDetached()
+    eventLog.clear()
+  }
+
+  @Test
   fun compositionEventExceptionDoesNotStopTheSession() = runTest {
     val content = treehouseAppContent()
 

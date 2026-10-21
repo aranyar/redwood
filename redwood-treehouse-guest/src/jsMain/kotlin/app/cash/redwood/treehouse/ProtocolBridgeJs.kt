@@ -30,7 +30,6 @@ import app.cash.redwood.protocol.PropertyChange
 import app.cash.redwood.protocol.PropertyTag
 import app.cash.redwood.protocol.RedwoodVersion
 import app.cash.redwood.protocol.WidgetTag
-import app.cash.redwood.protocol.guest.DefaultGuestProtocolAdapter
 import app.cash.redwood.protocol.guest.GuestProtocolAdapter
 import app.cash.redwood.protocol.guest.ProtocolMismatchHandler
 import app.cash.redwood.protocol.guest.ProtocolWidget
@@ -270,20 +269,7 @@ internal actual fun compositionProtocolAdapter(
   host: ZiplineTreehouseUi.Host,
   compositionId: String,
 ): GuestProtocolAdapter {
-  if (host.sourceType == null) {
-    // FastGuestProtocolAdapter emits a JS array and can only call a Zipline proxy.
-    // In-process tests pass a Kotlin host and read List<Change> back.
-    return DefaultGuestProtocolAdapter(
-      json = appLifecycle.json,
-      hostVersion = appLifecycle.hostProtocolVersion,
-      widgetSystemFactory = appLifecycle.protocolWidgetSystemFactory,
-      mismatchHandler = appLifecycle.mismatchHandler,
-    ).also { adapter ->
-      adapter.initChangesSink(ChangesSink { changes ->
-        host.sendCompositionChanges(compositionId, changes)
-      })
-    }
-  }
+  // Per-composition changes go through sendCompositionChanges, not the root sink.
   return FastGuestProtocolAdapter(
     json = appLifecycle.json,
     hostVersion = appLifecycle.hostProtocolVersion,
