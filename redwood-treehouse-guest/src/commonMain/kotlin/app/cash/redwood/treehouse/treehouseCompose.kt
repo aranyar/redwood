@@ -182,6 +182,9 @@ private class RedwoodZiplineTreehouseUi(
     val job = SupervisorJob(coroutineScope.coroutineContext.job)
     val handler = CoroutineExceptionHandler { _, throwable ->
       if (throwable is CancellationException) return@CoroutineExceptionHandler
+      // Error (OOM and the like) must reach the platform handler. fail() would
+      // turn it into a composition failure and swallow it.
+      if (throwable !is Exception) throw throwable
       fail(id, throwable)
     }
     // Inherit the Zipline dispatcher. A fresh scope with only a frame clock

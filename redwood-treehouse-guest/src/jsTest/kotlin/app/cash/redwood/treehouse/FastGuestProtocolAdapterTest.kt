@@ -118,6 +118,44 @@ class FastGuestProtocolAdapterTest {
     assertEquals(listOf("from host"), received)
   }
 
+  @Test fun bridgeThrowsWhenChangesChannelMissing() {
+    js(
+      """
+      globalThis.__directBridgePrevious = globalThis.app_cash_redwood_directSendChanges
+      delete globalThis.app_cash_redwood_directSendChanges
+      """,
+    )
+    try {
+      val guest = BridgeGuestProtocolAdapterImpl(
+        hostVersion = guestRedwoodVersion,
+        widgetSystemFactory = TestSchemaProtocolWidgetSystemFactory,
+        json = Json.Default,
+        mismatchHandler = ProtocolMismatchHandler.Throwing,
+      )
+      val widgetSystem = guest.widgetSystem as TestSchemaWidgetSystem<Unit>
+      val queued = assertFailsWith<IllegalStateException> {
+        guest.root.insert(0, widgetSystem.TestSchema.Button())
+      }
+      val flushed = assertFailsWith<IllegalStateException> {
+        guest.emitChanges()
+      }
+      val expected = "Direct bridge changes channel not registered. The guest was started with the direct bridge enabled."
+      assertEquals(expected, queued.message)
+      assertEquals(expected, flushed.message)
+    } finally {
+      js(
+        """
+        if (typeof globalThis.__directBridgePrevious === 'undefined') {
+          delete globalThis.app_cash_redwood_directSendChanges
+        } else {
+          globalThis.app_cash_redwood_directSendChanges = globalThis.__directBridgePrevious
+        }
+        delete globalThis.__directBridgePrevious
+        """,
+      )
+    }
+  }
+
   @Test fun bridgeAdapterInstallsAndRoutesDirectEvents() {
     // The bridge adapter sends guest->host changes through the direct change bridge global; stub it with no-ops.
     js(
