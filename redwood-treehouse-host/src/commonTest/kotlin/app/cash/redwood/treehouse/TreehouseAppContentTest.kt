@@ -669,6 +669,44 @@ class TreehouseAppContentTest {
     eventLog.takeEvent("codeSession.app.uis[0].close()")
   }
 
+  @Test
+  fun twoCompositionsKeepChangesAndEventsApart() = runTest {
+    val content = treehouseAppContent()
+
+    val view = treehouseView("view")
+    content.bind(view)
+    content.awaitInitialCodeLoading()
+
+    val codeSession = codeHost.startCodeSession("codeSession")
+    eventLog.takeEvent("codeSession.start()")
+    eventLog.takeEvent("codeSession.app.uis[0].start()")
+
+    val sessionContent = codeSession.appService.uis.single()
+    sessionContent.addWidget("root")
+    content.awaitCodeLoaded()
+
+    val leftButton = sessionContent.addCompositionWidget("left", "left")
+    val rightButton = sessionContent.addCompositionWidget("right", "right")
+
+    assertThat(buttonText(view, "left")).isEqualTo("left")
+    assertThat(buttonText(view, "right")).isEqualTo("right")
+    assertThat(view.views.filterIsInstance<ButtonValue>().map { it.text }).isEqualTo(listOf("root"))
+
+    leftButton.text("left-2")
+    sessionContent.emitCompositionChanges("left")
+    assertThat(buttonText(view, "left")).isEqualTo("left-2")
+    assertThat(buttonText(view, "right")).isEqualTo("right")
+
+    button(view, "left").onClick!!.invoke()
+    eventLog.takeEvent("codeSession.app.uis[0].sendCompositionEvent(left)")
+    button(view, "right").onClick!!.invoke()
+    eventLog.takeEvent("codeSession.app.uis[0].sendCompositionEvent(right)")
+
+    content.unbind()
+    content.awaitCodeDetached()
+    eventLog.takeEvent("codeSession.app.uis[0].close()")
+  }
+
   private fun treehouseAppContent(): TreehouseAppContent<FakeAppService> {
     return TreehouseAppContent(
       codeHost = codeHost,
@@ -676,6 +714,14 @@ class TreehouseAppContentTest {
       source = { app -> app.newUi() },
       leakDetector = LeakDetector.none(),
     )
+  }
+
+  private fun button(view: FakeTreehouseView, compositionId: String): ButtonValue {
+    return view.compositionChildren.getValue(compositionId).widgets.single().value as ButtonValue
+  }
+
+  private fun buttonText(view: FakeTreehouseView, compositionId: String): String? {
+    return button(view, compositionId).text
   }
 
   private fun treehouseView(name: String): FakeTreehouseView {
