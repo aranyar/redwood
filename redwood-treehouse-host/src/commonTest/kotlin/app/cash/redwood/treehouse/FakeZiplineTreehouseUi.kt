@@ -16,18 +16,18 @@
 package app.cash.redwood.treehouse
 
 import app.cash.redwood.RedwoodCodegenApi
+import app.cash.redwood.protocol.ChangesSink
 import app.cash.redwood.protocol.ChildrenTag
 import app.cash.redwood.protocol.Event
 import app.cash.redwood.protocol.Id
-import app.cash.redwood.protocol.ChangesSink
 import app.cash.redwood.protocol.guest.DefaultGuestProtocolAdapter
 import app.cash.redwood.protocol.guest.GuestProtocolAdapter
 import app.cash.redwood.protocol.guest.ProtocolMismatchHandler
 import app.cash.redwood.protocol.guest.ProtocolWidget
 import app.cash.redwood.protocol.guest.guestRedwoodVersion
-import app.cash.zipline.ZiplineException
 import app.cash.redwood.ui.core.api.FocusDirector
 import app.cash.redwood.ui.core.api.FocusRequester
+import app.cash.zipline.ZiplineException
 import com.example.redwood.testapp.protocol.guest.TestSchemaProtocolWidgetSystemFactory
 import com.example.redwood.testapp.widget.Button
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -119,9 +119,11 @@ class FakeZiplineTreehouseUi(
         json = json,
         widgetSystemFactory = TestSchemaProtocolWidgetSystemFactory,
       ).also { adapter ->
-        adapter.initChangesSink(ChangesSink { changes ->
-          host.sendCompositionChanges(compositionId, changes)
-        })
+        adapter.initChangesSink(
+          ChangesSink { changes ->
+            host.sendCompositionChanges(compositionId, changes)
+          },
+        )
       }
     }
   }

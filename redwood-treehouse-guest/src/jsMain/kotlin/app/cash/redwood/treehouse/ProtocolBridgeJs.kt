@@ -252,9 +252,11 @@ internal class FastGuestProtocolAdapter(
     host: ZiplineTreehouseUi.Host,
     compositionId: String,
   ) {
-    initChangesSink(ChangesSink { changes ->
-      host.sendCompositionChanges(compositionId, changes)
-    })
+    initChangesSink(
+      ChangesSink { changes ->
+        host.sendCompositionChanges(compositionId, changes)
+      },
+    )
   }
 
   init {
