@@ -41,8 +41,10 @@ internal actual fun compositionProtocolAdapter(
     widgetSystemFactory = appLifecycle.protocolWidgetSystemFactory,
     mismatchHandler = appLifecycle.mismatchHandler,
   ).also { adapter ->
-    adapter.initChangesSink(ChangesSink { changes ->
-      host.sendCompositionChanges(compositionId, changes)
-    })
+    adapter.initChangesSink(
+      ChangesSink { changes ->
+        host.sendCompositionChanges(compositionId, changes)
+      },
+    )
   }
 }

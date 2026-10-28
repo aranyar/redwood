@@ -1,10 +1,11 @@
 public abstract interface class app/cash/redwood/treehouse/MountableZiplineTreehouseUi : app/cash/redwood/treehouse/ZiplineTreehouseUi {
-	public abstract fun mount (Ljava/lang/String;Lkotlin/jvm/functions/Function0;)V
+	public abstract fun mount (Ljava/lang/String;Lkotlin/jvm/functions/Function2;)V
 	public abstract fun unmount (Ljava/lang/String;)V
 	public abstract fun updateViewport (Ljava/lang/String;DD)V
 }
 
 public final class app/cash/redwood/treehouse/StandardAppLifecycle : app/cash/redwood/treehouse/AppLifecycle {
+	public static final field $stable I
 	public synthetic fun <init> (Lapp/cash/redwood/protocol/guest/ProtocolWidgetSystemFactory;Lkotlinx/serialization/json/Json;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getFrameClock ()Landroidx/compose/runtime/MonotonicFrameClock;
 	public fun getGuestProtocolVersion-7jYel6c ()Ljava/lang/String;
