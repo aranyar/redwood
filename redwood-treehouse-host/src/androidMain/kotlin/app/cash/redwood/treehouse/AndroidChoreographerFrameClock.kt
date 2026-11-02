@@ -29,14 +29,11 @@ internal class AndroidChoreographerFrameClock private constructor(
   private val dispatchers: TreehouseDispatchers,
 ) : FrameClock {
   private var closed = false
-  private var frameScheduled = false
   private var lastFrameNanos = 0L
 
   override fun requestFrame(appLifecycle: AppLifecycle) {
-    if (closed || frameScheduled) return
-    frameScheduled = true
+    if (closed) return
     scope.launch(dispatchers.zipline) {
-      frameScheduled = false
       if (closed) return@launch
       appLifecycle.sendFrame(nextFrameNanos())
     }
